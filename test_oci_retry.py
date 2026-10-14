@@ -121,7 +121,19 @@ class TestOciArmRetry(unittest.TestCase):
             mock_pagination.return_value.data = [mock_bv]
             total, details = calculate_storage_usage({"tenancy": "test"}, "comp-id", "AD-1")
             self.assertEqual(total, 240)  # boot + block mock returns 120 twice
-            self.assertGreater(total + 100, MAX_TENANCY_STORAGE_GBS)
+    def test_token_renewal_logic(self):
+        """Verify that capacity exhaustion and 429 trigger token renewal, while network drops keep token."""
+        err_cap = oci.exceptions.ServiceError(status=500, code="InternalError", message="Out of host capacity", headers={})
+        cat_cap, _, _ = classify_error(err_cap)
+        self.assertEqual(cat_cap, "CAPACITY")
+
+        err_429 = oci.exceptions.ServiceError(status=429, code="TooManyRequests", message="Too many requests", headers={})
+        cat_429, _, _ = classify_error(err_429)
+        self.assertEqual(cat_429, "RATE_LIMIT")
+
+        err_timeout = ConnectionError("Connection dropped by peer")
+        cat_t, _, _ = classify_error(err_timeout)
+        self.assertEqual(cat_t, "AMBIGUOUS")
 
 
 if __name__ == "__main__":

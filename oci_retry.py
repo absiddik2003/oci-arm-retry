@@ -371,6 +371,24 @@ def wait_for_running_and_get_ip(config, compartment_id, instance_id, max_wait_se
     return None, None
 
 
+def send_telegram_alert(message, token=None, chat_id=None):
+    """Sends immediate Markdown Telegram alert upon successful VM provisioning."""
+    token = token or os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return
+    try:
+        import urllib.request
+        import urllib.parse
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = urllib.parse.urlencode({"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}).encode("utf-8")
+        req = urllib.request.Request(url, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            log("  ✓ Telegram notification dispatched successfully.")
+    except Exception as e:
+        log(f"Warning: Failed to send Telegram alert: {e}", "WARN")
+
+
 def run_provisioning_loop(args):
     """Main provisioning loop with preflight verification and conservative backoff."""
     config = load_oci_config(args.config_file)
@@ -549,6 +567,15 @@ def run_provisioning_loop(args):
                 if public_ip:
                     log(f"  SSH Command   : ssh -i ~/.ssh/oracle.pem ubuntu@{public_ip}")
                 log("=" * 70)
+
+                send_telegram_alert(
+                    f"🎉 *Oracle Always Free ARM VM Claimed!*\n"
+                    f"• *Shape*: {instance.shape} ({args.target_ocpus} OCPUs, {args.target_memory_gbs} GB RAM)\n"
+                    f"• *Disk*: {args.target_disk_gbs} GB Boot Volume\n"
+                    f"• *Public IP*: `{public_ip or 'Pending'}`\n"
+                    f"• *SSH*: `ssh -i ~/.ssh/oracle.pem ubuntu@{public_ip}`\n"
+                    f"• *OCID*: `{instance.id}`"
+                )
                 return 0
 
         except Exception as err:
@@ -556,7 +583,12 @@ def run_provisioning_loop(args):
 
             if err_type == "CAPACITY":
                 consecutive_rate_limits = 0
-                backoff = random.randint(args.retry_min, args.retry_max)  # 2 to 3 minutes (120-180s)
+                # Generate fresh token for next attempt after explicit rejection
+                opc_retry_token = str(uuid.uuid4())
+                state["opc_retry_token"] = opc_retry_token
+                save_state(args.state_file, state)
+
+                backoff = random.randint(args.retry_min, args.retry_max)
                 log(f"❌ {err_msg}")
                 log(f"  Waiting {backoff} seconds ({backoff // 60}m {backoff % 60}s) before next attempt...", "INFO")
                 if args.single_attempt:
@@ -566,10 +598,14 @@ def run_provisioning_loop(args):
 
             elif err_type == "RATE_LIMIT":
                 consecutive_rate_limits += 1
+                # Generate fresh token for next attempt after explicit rejection
+                opc_retry_token = str(uuid.uuid4())
+                state["opc_retry_token"] = opc_retry_token
+                save_state(args.state_file, state)
+
                 if wait_hint:
                     backoff = wait_hint + random.randint(5, 15)
                 else:
-                    # Exponential backoff: 5, 10, 20, 30 minutes with jitter
                     ladder = [300, 600, 1200, 1800]
                     idx = min(consecutive_rate_limits - 1, len(ladder) - 1)
                     backoff = ladder[idx] + random.randint(10, 60)
@@ -583,7 +619,7 @@ def run_provisioning_loop(args):
 
             elif err_type == "AMBIGUOUS":
                 log(f"⚠️ {err_msg}", "WARN")
-                log("  Ambiguous timeout/disconnect. Will reconcile state and retry with SAME opc-retry-token in 60s...")
+                log(f"  Ambiguous timeout/disconnect. Keeping existing opc-retry-token ({opc_retry_token[:8]}...) and retrying in 60s...")
                 time.sleep(60)
 
             else:  # PERMANENT
