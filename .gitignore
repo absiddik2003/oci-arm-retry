@@ -7,3 +7,8 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# State and logs
+.oci_retry_state.json
+*.log
+

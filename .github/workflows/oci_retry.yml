@@ -1,20 +1,30 @@
-name: OCI ARM Retry
+name: OCI ARM Safe Retry
 
 on:
   workflow_dispatch:  # Manual trigger
-  schedule:
-    - cron: '0 */6 * * *'  # Automatic fallback every 6 hours
+    inputs:
+      dry_run:
+        description: 'Run in Dry Run mode (no actual provisioning)'
+        required: false
+        default: false
+        type: boolean
+      max_attempts:
+        description: 'Maximum retry attempts for this job'
+        required: false
+        default: 2
+        type: number
 
 concurrency:
-  group: oci-retry            # Only one Job allowed per group
-  cancel-in-progress: false   # Do not cancel running jobs; new ones queue (max 1 running + 1 waiting)
+  group: oci-arm-provisioning
+  cancel-in-progress: false
 
 jobs:
-  retry:
+  provision:
     runs-on: ubuntu-latest
-    timeout-minutes: 355      # Close to GitHub Actions 6-hour limit
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # Suppress Node.js 20 deprecation warning
+    timeout-minutes: 30       # Bounded job duration to avoid excessive Actions consumption
+    permissions:
+      contents: read
+      actions: write
 
     steps:
       - name: Checkout
@@ -37,12 +47,8 @@ jobs:
           OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.oci
-
-          # Write API private key
           printf '%s' "$OCI_PRIVATE_KEY" > ~/.oci/oci_api_key.pem
           chmod 600 ~/.oci/oci_api_key.pem
-
-          # Write config (key_file uses absolute path)
           cat > ~/.oci/config << EOF
           [DEFAULT]
           user=$OCI_USER
@@ -52,31 +58,34 @@ jobs:
           key_file=/home/runner/.oci/oci_api_key.pem
           EOF
 
-      - name: Run OCI retry script
-        # Script succeeds (exit 0)  → next step auto-disables the workflow
-        # Timeout expires (exit 124) → treated as failure, triggers next Job
-        # timeout 19800s = 330 min, 25 min less than job timeout 355 min (buffer for setup steps)
+      - name: Run OCI ARM Retry Script
         id: run_script
-        continue-on-error: true
         env:
           PYTHONUNBUFFERED: "1"
-        run: timeout 19800 python oci_retry.py
+        run: |
+          EXTRA_FLAGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            EXTRA_FLAGS="--dry-run"
+          fi
+          MAX_ATTEMPTS="${{ inputs.max_attempts }}"
+          if [ -z "$MAX_ATTEMPTS" ]; then
+            MAX_ATTEMPTS="2"
+          fi
+          python oci_retry.py --max-attempts "$MAX_ATTEMPTS" $EXTRA_FLAGS
 
       - name: Auto-disable workflow on success
         if: steps.run_script.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
-          curl -s -X PUT \
-            -H "Authorization: token ${{ secrets.GH_PAT }}" \
+          echo "Disabling workflow after successful provisioning/detection..."
+          STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+            -H "Authorization: token $GH_TOKEN" \
             -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/actions/workflows/oci_retry.yml/disable
-          echo "Workflow auto-disabled"
-
-      - name: Trigger next Job (seamless relay)
-        if: steps.run_script.outcome != 'success'
-        run: |
-          curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GH_PAT }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/actions/workflows/oci_retry.yml/dispatches \
-            -d '{"ref":"main"}'
-          echo "Next Job triggered"
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/oci_retry.yml/disable)
+          echo "Disable HTTP response: $STATUS_CODE"
+          if [ "$STATUS_CODE" -ge 200 ] && [ "$STATUS_CODE" -lt 300 ]; then
+            echo "Workflow successfully disabled."
+          else
+            echo "Note: Workflow disable returned status $STATUS_CODE (may require admin PAT)."
+          fi
