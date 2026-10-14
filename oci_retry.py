@@ -556,9 +556,9 @@ def run_provisioning_loop(args):
 
             if err_type == "CAPACITY":
                 consecutive_rate_limits = 0
-                backoff = random.randint(300, 600)  # Conservative 5 to 10 minutes
+                backoff = random.randint(args.retry_min, args.retry_max)  # 2 to 3 minutes (120-180s)
                 log(f"❌ {err_msg}")
-                log(f"  Waiting {backoff} seconds ({backoff // 60}m) before next attempt...", "INFO")
+                log(f"  Waiting {backoff} seconds ({backoff // 60}m {backoff % 60}s) before next attempt...", "INFO")
                 if args.single_attempt:
                     log("Single attempt mode active. Exiting after capacity exhaustion.")
                     return 2
@@ -611,6 +611,9 @@ def main():
     parser.add_argument("--config-file", type=str, default=None, help="Path to OCI config file")
     parser.add_argument("--state-file", type=str, default=STATE_FILE_NAME, help="Durable state file path")
     parser.add_argument("--fallback-allowed", action="store_true", help="Allow fallback to 1 OCPU / 6 GB if authorized")
+    parser.add_argument("--retry-interval", type=int, default=76, help="Retry interval in seconds on capacity exhaustion (default: 76)")
+    parser.add_argument("--retry-min", type=int, default=74, help="Minimum backoff in seconds")
+    parser.add_argument("--retry-max", type=int, default=78, help="Maximum backoff in seconds")
 
     args = parser.parse_args()
     sys.exit(run_provisioning_loop(args))
