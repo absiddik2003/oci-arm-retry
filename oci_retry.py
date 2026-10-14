@@ -339,6 +339,38 @@ def execute_launch(
     return response.data
 
 
+def wait_for_running_and_get_ip(config, compartment_id, instance_id, max_wait_seconds=600):
+    """Waits for instance to enter RUNNING state and retrieves its assigned public IP."""
+    compute = oci.core.ComputeClient(config)
+    network = oci.core.VirtualNetworkClient(config)
+    log(f"Waiting for instance {instance_id} to reach RUNNING state...")
+
+    start = time.time()
+    while time.time() - start < max_wait_seconds:
+        try:
+            inst = compute.get_instance(instance_id).data
+            state = inst.lifecycle_state
+            log(f"  Current instance state: {state}")
+            if state == "RUNNING":
+                vnics = oci.pagination.list_call_get_all_results(
+                    compute.list_vnic_attachments,
+                    compartment_id=compartment_id,
+                    instance_id=instance_id,
+                ).data
+                for vnic_att in vnics:
+                    if vnic_att.lifecycle_state == "ATTACHED":
+                        vnic = network.get_vnic(vnic_att.vnic_id).data
+                        if vnic.public_ip:
+                            return vnic.public_ip, inst
+                return None, inst
+            elif state in ["TERMINATED", "TERMINATING"]:
+                raise RuntimeError(f"Instance transitioned to unexpected state: {state}")
+        except Exception as e:
+            log(f"Warning polling instance state: {e}", "WARN")
+        time.sleep(15)
+    return None, None
+
+
 def run_provisioning_loop(args):
     """Main provisioning loop with preflight verification and conservative backoff."""
     config = load_oci_config(args.config_file)
@@ -496,14 +528,27 @@ def run_provisioning_loop(args):
 
             if instance:
                 log("=" * 70)
-                log(f"🎉 SUCCESS! Ampere A1 instance created successfully!")
+                log("🎉 Ampere A1 instance launch request accepted!")
                 log(f"  Instance OCID : {instance.id}")
                 log(f"  Initial State : {instance.lifecycle_state}")
                 log(f"  Shape         : {instance.shape}")
                 log("=" * 70)
-                state["status"] = "PROVISIONED"
+
+                public_ip, final_inst = wait_for_running_and_get_ip(
+                    config, compartment_id, instance.id
+                )
+                state["status"] = "RUNNING" if public_ip else "PROVISIONED"
                 state["instance_id"] = instance.id
+                state["public_ip"] = public_ip
                 save_state(args.state_file, state)
+
+                log("=" * 70)
+                log("🚀 SUCCESS! Ampere A1 instance is RUNNING and verified!")
+                log(f"  Instance OCID : {instance.id}")
+                log(f"  Public IP     : {public_ip or 'Check OCI Console'}")
+                if public_ip:
+                    log(f"  SSH Command   : ssh -i ~/.ssh/oracle.pem ubuntu@{public_ip}")
+                log("=" * 70)
                 return 0
 
         except Exception as err:
