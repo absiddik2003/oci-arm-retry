@@ -1,34 +1,40 @@
-import oci
+import os
 import time
 import datetime
+import oci
 
 # ╔══════════════════════════════════════════════════════╗
 # ║  Target : VM.Standard.A1.Flex (ARM)                  ║
-# ║  Spec   : 2 OCPU / 12 GB RAM / 100 GB disk (default) ║
-# ║  Arch   : ARM (Ampere)                               ║
+# ║  Spec   : 4 OCPU / 24 GB RAM / 150 GB disk           ║
+# ║  Arch   : ARM (Ampere A1)                            ║
 # ║  Tier   : Oracle Always Free                         ║
-# ║  OS     : Canonical Ubuntu 22.04                     ║
+# ║  OS     : Canonical Ubuntu 24.04 LTS                 ║
 # ╚══════════════════════════════════════════════════════╝
 
 # ─── Configuration ───────────────────────────────────────
-COMPARTMENT_ID = (
-    "ocid1.tenancy.oc1..aaaaaaaaaqij5zlnm3v5qprvdll3j7nc6o3dk4ykzerugzxe37ckajkpjxpa"  # Replace with your tenancy OCID
+COMPARTMENT_ID = os.getenv(
+    "COMPARTMENT_ID",
+    "ocid1.tenancy.oc1..aaaaaaaaax5az7tlbtspgjz7pdrwhd2h2dvas6bxdzshjhphsqm2ex5mhxuq"
 )
-SSH_PUBLIC_KEY = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDdsLT/y7kupelr7rr+NcIyPVb4ZC20x9L5VuNMC5aYlXmSuqJQemXzdzfvp5F899CNdBe+TJJ+w55ka6C5J8vZTMmT4IfIOKZdJsKaTwOCbYTRz62PLcq90veNBPdn0kcnUxrqD3ReKxkKhyyL9WIWH1+4e945w9TL2wgr7Os0rYN5q/4Sa6ioof1I4NE9lGw+WL2yjOI0YLQXmWnvRb7qcQUdOCxgbOXw3GsPFwp3UZ+yJm8kbwFzJdTojaUeriuk3HQYFjzaOVN07kmf2vTQKSgsyw5B+BhyeYQmcRtNTNiriZ7skfS06/24ZM/hzLBz7/PQgw0DoRHDWB5YbyT1 ssh-key-2026-03-05"  # Replace with your SSH public key (.pub file content)
-INSTANCE_NAME = "streamlit-server"
-ARM_OCPUS = 2
-ARM_MEMORY_IN_GBS = 12
-BOOT_VOLUME_SIZE_IN_GBS = 100
-RETRY_INTERVAL = 90  # seconds
+SSH_PUBLIC_KEY = os.getenv(
+    "SSH_PUBLIC_KEY",
+    "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDa7iBmuwYkKvaKbgrUucjn/AxN3wDV4IcnS/xs9PhzPGjvBHXrJZYRr4B7i2YNUxHNgzOseOS5Ca7wN1nrXsPZDAnvU308mkV3TDxiIeyobIKUXj7Xb8jvVZmULmHzWb1Zc0KpcewuV4IDfGkT0FjnO1v5ZoiJQ16K7wxF2Y5qugiI4STJzdnoGNfgXmx8WC/lV0vLQ6DhImWDM/fSM6mI3kjdYHtujyEjqZfU/Eijy7dUhVrr6yxbiNCvmBXjqHtpKPxK2s6lg2Ayy0iWFTtlCUI27FQ9N3ib1kUUjAcS2jRMS37h7NdawWyndqfx9nPl4JiqNLwDCFniSyOiSfuApoUKnpwxEmmQVjS/b2DXP72fzQCXPqPn0/22JbPBWNTbfLjY2FWjAz0xKm2uWoyE59Fe7LeIKi5TDARhgx9uDm3FjG85NlZcuGkf8ykjhS70vNFoNCEX5urPrjf+i/HwbYp/xIb2GtxyYvpAIBYGbM+f5FVe7mx/voe61m13tbatNbJajlfBBYZ4n5cMDP/QusswbxayGRoVQ3ZObda+njVTP/SphXG4wB6ofuwLQ6gObpVrzHc2iPKdAfhp06JZm8KQiAVR2epl99VIu+KacXuA/pXH7FRqO7kb+QXLzOvsHG40XO+xDKPHjSkgq0+edq5pjR0wroNNNNIwsf13WQ== abuba@Abubakar"
+)
+INSTANCE_NAME = os.getenv("INSTANCE_NAME", "oracle-ampere-vps")
+SUBNET_ID = os.getenv(
+    "SUBNET_ID",
+    "ocid1.subnet.oc1.ap-mumbai-1.aaaaaaaaamoga7guxaxj2cuqg7oz2qz3xyqy6vvolltwq2wn3i47o476fyra"
+)
+IMAGE_ID = os.getenv(
+    "IMAGE_ID",
+    "ocid1.image.oc1.ap-mumbai-1.aaaaaaaa2jurqb3jm7hlpqw3au35loaqjkcozbyh7znn4jnfu5zbrgfulwia"
+)
+ARM_OCPUS = int(os.getenv("ARM_OCPUS", "4"))
+ARM_MEMORY_IN_GBS = int(os.getenv("ARM_MEMORY_IN_GBS", "24"))
+BOOT_VOLUME_SIZE_IN_GBS = int(os.getenv("BOOT_VOLUME_SIZE_IN_GBS", "150"))
+RETRY_INTERVAL = int(os.getenv("RETRY_INTERVAL", "60"))
 # ────────────────────────────────────────────────────────
 
-# ─── OCI Authentication ──────────────────────────────────
-# [Local] Create a config file at ~/.oci/config
-#   See README.md for format; key_file should point to your API private key .pem
-#
-# [GitHub Actions] No config file needed
-#   The workflow auto-creates it from GitHub Secrets — see README.md
-# ────────────────────────────────────────────────────────
 config = oci.config.from_file()
 
 
@@ -39,21 +45,24 @@ def get_availability_domain():
 
 
 def get_ubuntu_arm_image():
+    if IMAGE_ID:
+        return IMAGE_ID
     compute = oci.core.ComputeClient(config)
     images = compute.list_images(
         COMPARTMENT_ID,
         operating_system="Canonical Ubuntu",
-        operating_system_version="22.04",
         shape="VM.Standard.A1.Flex",
         sort_by="TIMECREATED",
         sort_order="DESC",
     ).data
     if not images:
-        raise Exception("Ubuntu 22.04 ARM image not found")
+        raise Exception("Ubuntu ARM image not found")
     return images[0].id
 
 
 def create_vcn_and_subnet():
+    if SUBNET_ID:
+        return SUBNET_ID
     network = oci.core.VirtualNetworkClient(config)
 
     # Check if VCN already exists
@@ -71,7 +80,6 @@ def create_vcn_and_subnet():
         ).data
         print(f"Created VCN: {vcn.id}")
 
-        # Create Internet Gateway
         ig = network.create_internet_gateway(
             oci.core.models.CreateInternetGatewayDetails(
                 compartment_id=COMPARTMENT_ID,
@@ -81,7 +89,6 @@ def create_vcn_and_subnet():
             )
         ).data
 
-        # Update route table to allow outbound traffic
         network.update_route_table(
             vcn.default_route_table_id,
             oci.core.models.UpdateRouteTableDetails(
@@ -94,7 +101,6 @@ def create_vcn_and_subnet():
             ),
         )
 
-        # Open inbound ports: SSH / HTTP / HTTPS / Streamlit
         security_lists = network.list_security_lists(COMPARTMENT_ID, vcn_id=vcn.id).data
         if security_lists:
             existing_egress = security_lists[0].egress_security_rules
@@ -119,7 +125,6 @@ def create_vcn_and_subnet():
                 ),
             )
 
-    # Check if subnet already exists
     subnets = network.list_subnets(
         COMPARTMENT_ID, vcn_id=vcn.id, display_name="retry-subnet"
     ).data
@@ -168,14 +173,20 @@ def try_create_instance(subnet_id, ad_name, image_id):
 
 
 def main():
-    print("Initializing network configuration...")
+    print("=" * 60)
+    print("  Oracle Cloud Ampere A1 Auto-Retry (GitHub Actions / Cloud)")
+    print(f"  Target: {ARM_OCPUS} OCPUs, {ARM_MEMORY_IN_GBS} GB RAM, {BOOT_VOLUME_SIZE_IN_GBS} GB Disk")
+    print("=" * 60)
+
+    print("Checking network configuration...")
     subnet_id = create_vcn_and_subnet()
+    print(f"Subnet ID: {subnet_id}")
 
     print("Fetching availability domain...")
     ad_name = get_availability_domain()
-    print(f"AD: {ad_name}")
+    print(f"Availability Domain: {ad_name}")
 
-    print("Fetching Ubuntu 22.04 ARM image...")
+    print("Checking Ubuntu ARM image...")
     image_id = get_ubuntu_arm_image()
     print(f"Image ID: {image_id}")
 
@@ -183,22 +194,25 @@ def main():
     while True:
         attempt += 1
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"\n[{now}] Attempt #{attempt} to create instance...")
+        print(f"\n[{now}] Attempt #{attempt} to claim Ampere A1 instance...", flush=True)
 
         try:
             instance = try_create_instance(subnet_id, ad_name, image_id)
-            print(f"\n✅ Success! Instance created")
-            print(f"   ID: {instance.id}")
-            print(f"   State: {instance.lifecycle_state}")
-            print(f"   Check Oracle Cloud Console for the public IP")
+            print(f"\n✅ SUCCESS! Ampere A1 instance claimed!")
+            print(f"   Instance ID: {instance.id}")
+            print(f"   Lifecycle State: {instance.lifecycle_state}")
+            print(f"   Instance Name: {instance.display_name}")
             break
         except oci.exceptions.ServiceError as e:
             if "Out of host capacity" in str(e) or "capacity" in str(e).lower():
-                print(f"❌ Out of capacity, retrying...")
+                print(f"❌ Out of host capacity in {ad_name}. Retrying in {RETRY_INTERVAL}s...", flush=True)
+            elif "TooManyRequests" in str(e) or e.status == 429:
+                print(f"⚠️ Rate limited by Oracle (429). Pausing 75s...", flush=True)
+                time.sleep(75)
             else:
-                print(f"❌ API error: {e.message}, retrying...")
+                print(f"❌ Oracle API error: {e.message}. Retrying in {RETRY_INTERVAL}s...", flush=True)
         except Exception as e:
-            print(f"⚠️ Network timeout or other error, retrying... ({type(e).__name__})")
+            print(f"⚠️ Connection timeout or network issue ({type(e).__name__}): {e}. Retrying in {RETRY_INTERVAL}s...", flush=True)
 
         time.sleep(RETRY_INTERVAL)
 

@@ -1,7 +1,9 @@
 name: OCI ARM Retry
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 */6 * * *'  # Automatic fallback every 6 hours
 
 concurrency:
   group: oci-retry            # Only one Job allowed per group
