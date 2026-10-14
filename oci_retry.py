@@ -613,8 +613,10 @@ def run_provisioning_loop(args):
                 log(f"⚠️ {err_msg}", "WARN")
                 log(f"  Throttled. Backing off for {backoff} seconds ({backoff // 60}m)...", "WARN")
                 if consecutive_rate_limits >= 4:
-                    log("SAFETY HALT: Repeated rate limiting (429) encountered. Halting automation.", "ERROR")
-                    return 3
+                    log("Warning: Sustained 429 throttling. Cooling down for 15 minutes before resuming...", "WARN")
+                    time.sleep(900)
+                    consecutive_rate_limits = 0
+                    continue
                 time.sleep(backoff)
 
             elif err_type == "AMBIGUOUS":
@@ -646,10 +648,9 @@ def main():
     parser.add_argument("--ssh-public-key", type=str, default=None, help="SSH public key string")
     parser.add_argument("--config-file", type=str, default=None, help="Path to OCI config file")
     parser.add_argument("--state-file", type=str, default=STATE_FILE_NAME, help="Durable state file path")
-    parser.add_argument("--fallback-allowed", action="store_true", help="Allow fallback to 1 OCPU / 6 GB if authorized")
-    parser.add_argument("--retry-interval", type=int, default=76, help="Retry interval in seconds on capacity exhaustion (default: 76)")
-    parser.add_argument("--retry-min", type=int, default=74, help="Minimum backoff in seconds")
-    parser.add_argument("--retry-max", type=int, default=78, help="Maximum backoff in seconds")
+    parser.add_argument("--retry-interval", type=int, default=130, help="Retry interval in seconds on capacity exhaustion (default: 130)")
+    parser.add_argument("--retry-min", type=int, default=120, help="Minimum backoff in seconds (default: 120)")
+    parser.add_argument("--retry-max", type=int, default=140, help="Maximum backoff in seconds (default: 140)")
 
     args = parser.parse_args()
     sys.exit(run_provisioning_loop(args))
